@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- Add data-bs-theme="dark" to ensure all Bootstrap components are dark -->
+<html lang="en" data-bs-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Set the correct title -->
+    <title>CodeTest</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    
+    <!-- Use the correct .tsx entry file -->
+    <script type="module" src="/src/main.tsx"></script>
+
+    <!-- 
+      THIS IS THE FIX: 
+      Add the Bootstrap JavaScript bundle.
+      This is required for dropdowns, modals, and the navbar toggle to work.
+    -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>
