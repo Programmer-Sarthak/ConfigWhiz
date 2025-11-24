@@ -1,0 +1,26 @@
+Secrets - NEVER UPLOAD THESE
+
+.env
+.env.local
+*.pem
+*.key
+
+Python
+
+pycache/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.pytest_cache/
+
+Node.js / React
+
+node_modules/
+dist/
+build/
+.DS_Store
+
+Docker (if you have local logs)
+
+*.log
