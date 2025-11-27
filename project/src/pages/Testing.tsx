@@ -67,10 +67,14 @@ class DataAnalyzer:
 def find_word_frequency(text):
     if not isinstance(text, str):
         return {}
-    words = text.lower().split()
+    
+    # Improved logic: Replace non-alphabetic characters with spaces, then split
+    import re
+    text = re.sub(r'[^a-z\\s]', '', text.lower())
+    words = text.split()
+    
     frequency = {}
     for word in words:
-        word = ''.join(e for e in word if e.isalnum())
         if word:
             frequency[word] = frequency.get(word, 0) + 1
     return frequency
@@ -139,14 +143,53 @@ module.exports = { DataAnalyzer, findWordFrequency };
     language: "javascript",
   },
   java: {
+    // --- THIS IS THE FIX ---
     defaultCode: `import java.util.List;
-import java.util.Arrays;
-// ... (rest of your Java example)
+import java.util.ArrayList;
+
+// --- Professional Example: DataAnalyzer Class ---
 
 class DataAnalyzer {
-    // This class will be wrapped in the test runner
+    private List<Number> data;
+
+    public DataAnalyzer(List<Number> data) {
+        if (data == null) {
+            throw new IllegalArgumentException("Data cannot be null");
+        }
+        for (Object item : data) {
+            if (!(item instanceof Number)) {
+                throw new IllegalArgumentException("All items must be numbers");
+            }
+        }
+        this.data = new ArrayList<>(data);
+    }
+
+    public double getMean() {
+        if (data.isEmpty()) {
+            throw new IllegalStateException("Cannot calculate mean of empty list");
+        }
+        double sum = 0.0;
+        for (Number n : data) {
+            sum += n.doubleValue();
+        }
+        return sum / data.size();
+    }
+
+    public double getMax() {
+        if (data.isEmpty()) {
+             throw new IllegalStateException("Cannot calculate max of empty list");
+        }
+        double max = -Double.MAX_VALUE;
+        for(Number n : data) {
+             if(n.doubleValue() > max) {
+                 max = n.doubleValue();
+             }
+        }
+        return max;
+    }
 }
 `,
+    // --- END FIX ---
     language: "java",
   },
 };
@@ -219,7 +262,6 @@ export default function Testing() {
     setError(null);
     setSelectedFile(null);
     setZipFileName("No project selected");
-    // NOTE: We removed the restriction forcing Python here. Java is now allowed.
   };
 
   const handleZipFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -301,8 +343,6 @@ export default function Testing() {
       return;
     }
     
-    // NOTE: We removed the language check here. All languages are allowed.
-
     setIsLoadingAI(false); 
     setIsLoadingRunner(true);
     setError(null);
@@ -336,8 +376,6 @@ export default function Testing() {
       setIsLoadingRunner(false);
     }
   };
-
-  // const saveTestHistory = async (result: TestResult) => { ... };
 
   const isRunning = isLoadingAI || isLoadingRunner;
   
@@ -410,7 +448,7 @@ export default function Testing() {
             </button>
           </div>
 
-          {/* --- Language Dropdown (React Controlled) - ALWAYS VISIBLE --- */}
+          {/* --- Language Dropdown (React Controlled) --- */}
             <div className="btn-group position-relative">
               <button
                 type="button"

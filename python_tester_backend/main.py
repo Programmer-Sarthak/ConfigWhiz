@@ -42,7 +42,7 @@ except Exception as e:
 DOCKER_IMAGES = {
     "python": "python:3.11-slim",
     "javascript": "node:20-slim",
-    "java": "eclipse-temurin:17-jdk-slim", 
+    "java": "eclipse-temurin:17-jdk", # Correct image
     "java-project": "maven:3.9-eclipse-temurin-17" 
 }
 
@@ -64,8 +64,37 @@ class TestResult(BaseModel):
     summary: str
     output: str
 
-# --- HELPER 1: Run Single File (Unchanged) ---
+# --- HELPER: Java Code Sanitizer ---
+def sanitize_java_code(source_code: str) -> str:
+    """
+    Moves all import statements to the top of the Java file
+    to prevent compilation errors if the AI places them mid-file.
+    """
+    lines = source_code.splitlines()
+    imports = []
+    code_body = []
+    
+    for line in lines:
+        stripped = line.strip()
+        # Check for imports
+        if stripped.startswith("import ") and stripped.endswith(";"):
+            imports.append(line)
+        # Remove package declarations (single file runner uses default package)
+        elif stripped.startswith("package "):
+             pass 
+        else:
+            code_body.append(line)
+            
+    # Remove duplicate imports while preserving order
+    unique_imports = list(dict.fromkeys(imports))
+    
+    # Reassemble: Imports first, then the rest of the code
+    return "\n".join(unique_imports + [""] + code_body)
+
+# --- HELPER 1: Run Single File (Updated) ---
+
 def run_in_docker(language: str, code: str, test_code: str) -> TestResult:
+    
     if language not in DOCKER_IMAGES:
         raise HTTPException(status_code=400, detail="Unsupported language")
 
@@ -79,10 +108,18 @@ def run_in_docker(language: str, code: str, test_code: str) -> TestResult:
             print(f"Image '{image_name}' not found. Starting download...")
             client.images.pull(image_name) 
             print(f"Image pull complete: {image_name}")
-            return TestResult(success=False, summary="Downloading Environment...", output=f"The Docker image '{image_name}' was not found. The download has completed. Please try running the test again.")
+            return TestResult(
+                success=False,
+                summary="Downloading Environment...",
+                output=f"The Docker image '{image_name}' was not found. The download has completed. Please try running the test again."
+            )
         except Exception as pull_error:
              print(f"Failed to pull image: {pull_error}")
-             return TestResult(success=False, summary="Failed to Download Environment", output=f"Failed to pull Docker image '{image_name}'. Error: {pull_error}")
+             return TestResult(
+                success=False,
+                summary="Failed to Download Environment",
+                output=f"Failed to pull Docker image '{image_name}'. Error: {pull_error}"
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Docker error: {e}")
 
@@ -92,9 +129,12 @@ def run_in_docker(language: str, code: str, test_code: str) -> TestResult:
     container = None
     try:
         if language == "java":
+            # --- USE SANITIZER HERE ---
+            # Fix imports before writing to file
+            clean_code = sanitize_java_code(test_code)
             test_path = temp_dir / "TestRunner.java"
             with open(test_path, 'w', encoding='utf-8') as f:
-                f.write(test_code)
+                f.write(clean_code)
         else:
             code_filename = "user_code.py" if language == "python" else "user_code.js"
             test_filename = "test_code.py" if language == "python" else "test_code.js"
@@ -115,10 +155,15 @@ def run_in_docker(language: str, code: str, test_code: str) -> TestResult:
         )
 
         try:
-            result = container.wait(timeout=10) 
+            # 300s timeout
+            result = container.wait(timeout=300) 
             exit_code = result.get("StatusCode", 1) 
         except Exception as e:
-            return TestResult(success=False, summary="Code execution timed out (10 seconds).", output=f"Timeout: The test run exceeded the 10-second limit.")
+            return TestResult(
+                success=False,
+                summary="Code execution timed out (5 minutes).",
+                output=f"Timeout: The test run exceeded the 5-minute limit."
+            )
 
         logs = container.logs(stdout=True, stderr=True).decode('utf-8')
 
@@ -137,7 +182,7 @@ def run_in_docker(language: str, code: str, test_code: str) -> TestResult:
              shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-# --- HELPER 2: Run Project ZIP (UPDATED with Auto-Correct Java Names) ---
+# --- HELPER 2: Run Project ZIP (Unchanged) ---
 
 def run_project_in_docker(language: str, zip_file: UploadFile) -> TestResult:
     
@@ -189,17 +234,6 @@ def run_project_in_docker(language: str, zip_file: UploadFile) -> TestResult:
         except Exception as e:
             return TestResult(success=False, summary="ZIP Error", output=f"Invalid .zip file. Error: {e}")
         
-        # --- SMART UNZIP ---
-        items = list(temp_dir.iterdir())
-        items = [i for i in items if i.name != "project.zip"]
-        if len(items) == 1 and items[0].is_dir():
-            nested_dir = items[0]
-            print(f"Detected nested folder: {nested_dir.name}. Moving contents up...")
-            for item in nested_dir.iterdir():
-                shutil.move(str(item), str(temp_dir))
-            os.rmdir(nested_dir)
-
-        # --- SMART JAVA LOGIC (With Auto-Rename) ---
         if language == "java":
             if not (temp_dir / "pom.xml").exists():
                  return TestResult(success=False, summary="Invalid Project", output="No 'pom.xml' found. Please include a pom.xml file.")
@@ -214,17 +248,13 @@ def run_project_in_docker(language: str, zip_file: UploadFile) -> TestResult:
                         try:
                             with open(item, 'r', encoding='utf-8') as f:
                                 content = f.read()
-                                
-                                # 1. Auto-Correct Filename based on Class definition
                                 class_match = re.search(r'public\s+class\s+(\w+)', content)
                                 target_filename = item.name
                                 if class_match:
                                     detected_class = class_match.group(1)
                                     if item.stem != detected_class:
-                                        print(f"Renaming {item.name} to {detected_class}.java to match class name.")
                                         target_filename = f"{detected_class}.java"
 
-                                # 2. Detect Package to move to correct folder
                                 package_match = re.search(r'^\s*package\s+([\w.]+);', content, re.MULTILINE)
                                 if package_match:
                                     package_name = package_match.group(1)
@@ -234,18 +264,18 @@ def run_project_in_docker(language: str, zip_file: UploadFile) -> TestResult:
                                     shutil.move(str(item), str(target_dir / target_filename))
                                 else:
                                     shutil.move(str(item), str(src_main / target_filename))
-                                    
                         except Exception as e:
                             print(f"Error processing {item.name}: {e}")
 
         elif language == "python":
-            # (Python logic unchanged)
             req_file = None
             if (temp_dir / "requirements.txt").exists(): req_file = "requirements.txt"
             elif (temp_dir / "requirement.txt").exists(): req_file = "requirement.txt"
+            
             install_cmd = ""
             if req_file and (temp_dir / req_file).stat().st_size > 0:
                 install_cmd = f"pip install -r {req_file} && "
+
             test_files = list(temp_dir.glob("test_*.py")) + list(temp_dir.glob("*_test.py"))
             if not test_files:
                 smoke_test = """
@@ -271,21 +301,22 @@ class TestProjectStructure(unittest.TestCase):
                 self.fail(f"Error importing {module_name}.py: {e}")
 if __name__ == '__main__': unittest.main()
 """
-                with open(temp_dir / "test_smoke_generated.py", "w", encoding="utf-8") as f: f.write(smoke_test)
+                with open(temp_dir / "test_smoke_generated.py", "w", encoding="utf-8") as f:
+                    f.write(smoke_test)
                 project_commands = f"pip install pytest && {install_cmd}pytest test_smoke_generated.py"
             else:
                 project_commands = f"pip install pytest && {install_cmd}pytest"
 
         elif language == "javascript":
-            # (JS logic unchanged)
             is_frontend_project = (temp_dir / "index.html").exists() and (temp_dir / "script.js").exists()
             if is_frontend_project and not (temp_dir / "package.json").exists():
+                 print("Frontend project detected. Injecting test harness...")
                  pkg_json = """{"name": "frontend-test","version": "1.0.0","scripts": {"test": "node test_runner.js"},"dependencies": {"jsdom": "^24.0.0"}}"""
                  with open(temp_dir / "package.json", "w", encoding="utf-8") as f: f.write(pkg_json)
                  test_runner = """const fs = require('fs'); const jsdom = require("jsdom"); const { JSDOM } = jsdom; try { const html = fs.readFileSync('index.html', 'utf8'); const scriptContent = fs.readFileSync('script.js', 'utf8'); const dom = new JSDOM(html, { runScripts: "dangerously", resources: "usable" }); const { window } = dom; window.eval(scriptContent); console.log("[OK] script.js loaded successfully."); console.log("[OK] DOM initialized successfully."); } catch (error) { console.error("[FAIL] Test Failed:", error); process.exit(1); }"""
                  with open(temp_dir / "test_runner.js", "w", encoding="utf-8") as f: f.write(test_runner)
             elif not (temp_dir / "package.json").exists():
-                 return TestResult(success=False, summary="Invalid Project", output="No 'package.json' found.")
+                 return TestResult(success=False, summary="Invalid Project", output=error_msg)
 
         container = client.containers.run(
             image=image_name,
@@ -297,13 +328,13 @@ if __name__ == '__main__': unittest.main()
         )
 
         try:
-            result = container.wait(timeout=300) 
+            result = container.wait(timeout=600) 
             exit_code = result.get("StatusCode", 1) 
         except Exception as e:
             return TestResult(
                 success=False,
-                summary="Project execution timed out (5 minutes).",
-                output=f"Timeout: The project run exceeded the 300-second limit."
+                summary="Project execution timed out (10 minutes).",
+                output=f"Timeout: The project run exceeded the 10-minute limit."
             )
 
         logs = container.logs(stdout=True, stderr=True).decode('utf-8')
